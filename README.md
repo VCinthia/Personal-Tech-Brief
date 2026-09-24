@@ -12,7 +12,10 @@ If you just want your brief, you do not need any commands:
 
 1. **First time only:** copy `.env.example` to `.env`, set a `MSSQL_SA_PASSWORD`
    and `ACCEPT_EULA=Y` (see the Compose section below), and make sure Docker
-   Desktop is installed.
+   Desktop is installed. `MSSQL_SA_PASSWORD` must meet SQL Server's password
+   policy — at least 8 characters with three of: uppercase, lowercase, digit,
+   symbol (for example `LocalDev!Passw0rd`) — otherwise SQL Server exits on
+   startup and the app never becomes ready.
 2. **Every time:** double-click **`Brief.cmd`** in this folder. It starts the app,
    pulls fresh items from your sources, generates a brief, and opens it in your
    browser (`http://localhost:8080/brief`). The first run builds the images and
@@ -273,3 +276,7 @@ deployment hardening remain in their separately tracked later MVP slices.
 
 The [implementation guide](docs/implementation/README.md) explains
 delivered flows, design decisions, test evidence and accepted checkpoints.
+
+## License
+
+Released under the [MIT License](LICENSE).
