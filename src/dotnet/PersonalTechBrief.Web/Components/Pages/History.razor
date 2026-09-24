@@ -1,0 +1,332 @@
+@page "/history"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Brief history</PageTitle>
+
+@* FR-015/UC-011/AC-014: browse previous briefs and their originally-selected updates from the immutable
+   snapshot. A finite list of briefs and their selected items — never a browseable feed of every item. *@
+<section class="history-page" aria-labelledby="history-title">
+    <div class="page-heading">
+        <div>
+            <h1 id="history-title">Brief history</h1>
+            <p>Previous briefs and the updates that were selected for them &mdash; a finite list, not a feed.</p>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <p role="status">Loading brief history...</p>
+    }
+    else if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <div class="error-message" role="alert">
+            <p>@loadError</p>
+            <button class="button button-secondary" type="button" @onclick="ReloadAsync">Try again</button>
+        </div>
+    }
+    else if (briefs.Count == 0)
+    {
+        <p class="empty-state">No briefs have been generated yet.</p>
+    }
+    else
+    {
+        <div class="history-layout">
+            <ol class="history-list">
+                @foreach (var summary in briefs)
+                {
+                    <li class="history-list-item @(selectedBrief?.Brief.Id == summary.Id ? "is-active" : null)" @key="summary.Id">
+                        <button class="history-list-button" type="button" @onclick="() => SelectBriefAsync(summary.Id)">
+                            <span class="history-list-date">@FormatTime(summary.GeneratedAtUtc)</span>
+                            <span class="status-badge">@DisplayStatus(summary.Status)</span>
+                            <span class="history-list-count">@summary.SelectedCount selected</span>
+                        </button>
+                    </li>
+                }
+            </ol>
+
+            @if (nextCursor is not null)
+            {
+                <button class="button button-secondary" type="button" @onclick="LoadMoreAsync" disabled="@isLoadingMore">
+                    @(isLoadingMore ? "Loading..." : "Load more")
+                </button>
+            }
+        </div>
+
+        <div class="history-detail">
+            @if (isLoadingDetail)
+            {
+                <p role="status">Loading brief...</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(detailError))
+            {
+                <p class="error-message" role="alert">@detailError</p>
+            }
+            else if (selectedBrief is null)
+            {
+                <p class="empty-state">Select a brief to see the updates originally selected for it.</p>
+            }
+            else
+            {
+                <div class="brief-meta">
+                    <span class="status-badge">@DisplayStatus(selectedBrief.Brief.Status)</span>
+                    <span>Generated @FormatTime(selectedBrief.Brief.GeneratedAtUtc)</span>
+                </div>
+
+                @if (selectedBrief.Items.Count == 0)
+                {
+                    <p class="empty-state">This brief selected no updates.</p>
+                }
+                else
+                {
+                    <ol class="brief-items">
+                        @foreach (var item in selectedBrief.Items)
+                        {
+                            <li class="brief-item" @key="item.Id">
+                                <article aria-labelledby="@($"history-item-{item.Id}")">
+                                    <p class="brief-item-topic">@item.Topic</p>
+                                    <h2 id="@($"history-item-{item.Id}")">@item.Title</h2>
+                                    <p class="brief-item-summary">@item.Summary</p>
+                                    <p class="brief-item-why"><strong>Why this is relevant:</strong> @item.WhyRelevant</p>
+                                    <UpdateInteractions TechnologyUpdateId="item.TechnologyUpdateId"
+                                                        BriefItemId="item.Id"
+                                                        InitialFeedback="item.CurrentFeedback"
+                                                        InitiallySaved="item.IsSaved"
+                                                        Sources="MapSources(item.Sources)" />
+                                </article>
+                            </li>
+                        }
+                    </ol>
+                }
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private const int PageLimit = 20;
+
+    private readonly List<BriefSummary> briefs = [];
+    private string? nextCursor;
+    private BriefDetail? selectedBrief;
+
+    private bool isLoading = true;
+    private bool isLoadingMore;
+    private bool isLoadingDetail;
+    private string? loadError;
+    private string? detailError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFirstPageAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        briefs.Clear();
+        nextCursor = null;
+        selectedBrief = null;
+        detailError = null;
+        await LoadFirstPageAsync();
+    }
+
+    private async Task LoadFirstPageAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            var page = await FetchPageAsync(cursor: null);
+            if (page is null)
+            {
+                loadError = "We could not load your brief history. Reload to try again.";
+                return;
+            }
+
+            briefs.AddRange(page.Briefs);
+            nextCursor = page.NextCursor;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        if (nextCursor is null)
+        {
+            return;
+        }
+
+        isLoadingMore = true;
+        try
+        {
+            var page = await FetchPageAsync(nextCursor);
+            if (page is not null)
+            {
+                briefs.AddRange(page.Briefs);
+                nextCursor = page.NextCursor;
+            }
+        }
+        finally
+        {
+            isLoadingMore = false;
+        }
+    }
+
+    private async Task<HistoryPage?> FetchPageAsync(string? cursor)
+    {
+        var path = $"api/v1/briefs?limit={PageLimit}";
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            path += $"&cursor={Uri.EscapeDataString(cursor)}";
+        }
+
+        try
+        {
+            using var response = await CreateClient().GetAsync(Endpoint(path));
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return await response.Content.ReadFromJsonAsync<HistoryPage>();
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private async Task SelectBriefAsync(Guid briefId)
+    {
+        isLoadingDetail = true;
+        detailError = null;
+        selectedBrief = null;
+        try
+        {
+            using var response = await CreateClient().GetAsync(Endpoint($"api/v1/briefs/{briefId}"));
+            if (!response.IsSuccessStatusCode)
+            {
+                detailError = "We could not load this brief. Please try again.";
+                return;
+            }
+
+            selectedBrief = await response.Content.ReadFromJsonAsync<BriefDetail>();
+        }
+        catch (HttpRequestException)
+        {
+            detailError = "We could not reach the service to load this brief. Please try again.";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            detailError = "We could not load this brief. Please try again.";
+        }
+        finally
+        {
+            isLoadingDetail = false;
+        }
+    }
+
+    private static IReadOnlyList<UpdateInteractions.SourceLink> MapSources(List<BriefSource> sources) =>
+        sources
+            .Select(source => new UpdateInteractions.SourceLink(
+                source.SourceItemId,
+                source.Title,
+                source.Url,
+                source.PublishedAtUtc))
+            .ToList();
+
+    private static string DisplayStatus(string? status) => status?.ToLowerInvariant() switch
+    {
+        "generating" => "Generating",
+        "completed" => "Completed",
+        "failed" => "Failed",
+        _ => "Unknown",
+    };
+
+    private static string FormatTime(DateTimeOffset timestamp) => timestamp
+        .ToUniversalTime()
+        .ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+
+    private sealed class HistoryPage
+    {
+        public List<BriefSummary> Briefs { get; set; } = [];
+
+        public string? NextCursor { get; set; }
+    }
+
+    private sealed class BriefSummary
+    {
+        public Guid Id { get; set; }
+
+        public DateTimeOffset GeneratedAtUtc { get; set; }
+
+        public string Status { get; set; } = string.Empty;
+
+        public int CandidateCount { get; set; }
+
+        public int SelectedCount { get; set; }
+    }
+
+    private sealed class BriefDetail
+    {
+        public BriefHeader Brief { get; set; } = new();
+
+        public List<BriefItem> Items { get; set; } = [];
+    }
+
+    private sealed class BriefHeader
+    {
+        public Guid Id { get; set; }
+
+        public DateTimeOffset GeneratedAtUtc { get; set; }
+
+        public string Status { get; set; } = string.Empty;
+
+        public int SelectedCount { get; set; }
+    }
+
+    private sealed class BriefItem
+    {
+        public Guid Id { get; set; }
+
+        public Guid TechnologyUpdateId { get; set; }
+
+        public int Rank { get; set; }
+
+        public string Title { get; set; } = string.Empty;
+
+        public string Topic { get; set; } = string.Empty;
+
+        public string Summary { get; set; } = string.Empty;
+
+        public string WhyRelevant { get; set; } = string.Empty;
+
+        public List<BriefSource> Sources { get; set; } = [];
+
+        public string? CurrentFeedback { get; set; }
+
+        public bool IsSaved { get; set; }
+    }
+
+    private sealed class BriefSource
+    {
+        public Guid SourceItemId { get; set; }
+
+        public string Title { get; set; } = string.Empty;
+
+        public string? Url { get; set; }
+
+        public DateTimeOffset? PublishedAtUtc { get; set; }
+    }
+}

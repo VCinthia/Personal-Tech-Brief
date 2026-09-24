@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-PersonalTechBrief.Processor-4885ee41-b9c7-46cf-8cde-9baa74a6dedb</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PersonalTechBrief.Application\PersonalTechBrief.Application.csproj" />
+    <ProjectReference Include="..\PersonalTechBrief.Infrastructure\PersonalTechBrief.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

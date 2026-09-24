@@ -1,0 +1,373 @@
+@page "/sources"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Sources</PageTitle>
+
+<section class="sources-page" aria-labelledby="sources-title">
+    <div class="page-heading">
+        <div>
+            <h1 id="sources-title">Sources</h1>
+            <p>Configure the trusted feeds that provide input for your brief.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message" role="status">@statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(operationError))
+    {
+        <div class="error-message" role="alert">
+            <p>@operationError</p>
+        </div>
+    }
+
+    <div class="sources-grid">
+        <section class="source-panel" aria-labelledby="source-form-title">
+            <h2 id="source-form-title">@(editingId is null ? "Add a source" : "Edit source")</h2>
+            <p class="helper-text">Only RSS or Atom feeds become permanent sources. Adding a source does not create a browser or a new content feed.</p>
+
+            <EditForm Model="editor" OnValidSubmit="SaveSourceAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="validation-summary" />
+
+                <div class="form-field">
+                    <label for="source-name">Name</label>
+                    <InputText id="source-name" class="form-control" @bind-Value="editor.Name" autocomplete="off" />
+                    <ValidationMessage For="@(() => editor.Name)" />
+                </div>
+
+                <div class="form-field">
+                    <label for="source-feed-url">RSS or Atom feed URL</label>
+                    <InputText id="source-feed-url" class="form-control" @bind-Value="editor.FeedUrl" autocomplete="url" type="url" placeholder="https://example.com/feed.xml" />
+                    <ValidationMessage For="@(() => editor.FeedUrl)" />
+                </div>
+
+                @if (editingId is not null)
+                {
+                    <div class="form-field checkbox-field">
+                        <InputCheckbox id="source-is-enabled" @bind-Value="editor.IsEnabled" />
+                        <label for="source-is-enabled">Enabled for automatic ingestion</label>
+                    </div>
+                }
+
+                <div class="form-actions">
+                    <button class="button" type="submit" disabled="@(isSaving || actionSourceId is not null)">
+                        @(isSaving ? "Saving..." : editingId is null ? "Add source" : "Save changes")
+                    </button>
+                    @if (editingId is not null)
+                    {
+                        <button class="button button-secondary" type="button" @onclick="CancelEdit" disabled="@(isSaving || actionSourceId is not null)">Cancel</button>
+                    }
+                </div>
+            </EditForm>
+        </section>
+
+        <section class="source-panel" aria-labelledby="configured-sources-title" aria-busy="@isLoading">
+            <div class="section-heading">
+                <h2 id="configured-sources-title">Configured sources</h2>
+                <button class="text-button" type="button" @onclick="ReloadAsync" disabled="@(isLoading || isSaving || actionSourceId is not null)">Reload</button>
+            </div>
+
+            @if (isLoading)
+            {
+                <p role="status">Loading sources...</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(loadError))
+            {
+                <div class="error-message" role="alert">
+                    <p>@loadError</p>
+                    <button class="button button-secondary" type="button" @onclick="ReloadAsync">Try again</button>
+                </div>
+            }
+            else if (sources.Count == 0)
+            {
+                <p class="empty-state">No sources are configured yet. Add an RSS or Atom feed to begin.</p>
+            }
+            else
+            {
+                <div class="table-wrapper">
+                    <table>
+                        <caption class="visually-hidden">Configured RSS and Atom sources with their active and latest ingestion status.</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Feed URL</th>
+                                <th scope="col">State</th>
+                                <th scope="col">Latest ingestion</th>
+                                <th scope="col"><span class="visually-hidden">Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var source in sources)
+                            {
+                                <tr @key="source.Id">
+                                    <th scope="row">@source.Name</th>
+                                    <td><span class="source-url">@source.FeedUrl</span></td>
+                                    <td>
+                                        <span class="status-badge @(source.IsEnabled ? "status-badge--active" : "status-badge--inactive")">
+                                            @(source.IsEnabled ? "Active" : "Disabled")
+                                        </span>
+                                    </td>
+                                    <td>
+                                        @if (source.LastIngestionAtUtc is null)
+                                        {
+                                            <span>Not yet ingested</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="ingestion-status">@DisplayIngestionStatus(source.LastIngestionStatus)</span>
+                                            <span class="ingestion-detail">@FormatIngestionTime(source.LastIngestionAtUtc.Value)</span>
+                                        }
+                                    </td>
+                                    <td class="row-actions">
+                                        <button class="text-button" type="button" @onclick="() => BeginEdit(source)" disabled="@(isSaving || actionSourceId is not null)">Edit</button>
+                                        @if (source.IsEnabled)
+                                        {
+                                            <button class="text-button text-button-danger" type="button" @onclick="() => SetSourceEnabledAsync(source, false)" disabled="@(isSaving || actionSourceId is not null)">
+                                                @(IsActionInProgress(source, "disable") ? "Disabling..." : "Disable")
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="text-button" type="button" @onclick="() => SetSourceEnabledAsync(source, true)" disabled="@(isSaving || actionSourceId is not null)">
+                                                @(IsActionInProgress(source, "enable") ? "Enabling..." : "Enable")
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    </div>
+</section>
+
+@code {
+    private readonly List<SourceResponse> sources = [];
+    private SourceEditor editor = new();
+    private Guid? editingId;
+    private Guid? actionSourceId;
+    private string? actionName;
+    private bool isLoading = true;
+    private bool isSaving;
+    private string? loadError;
+    private string? operationError;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSourcesAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        statusMessage = null;
+        operationError = null;
+        await LoadSourcesAsync();
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        isLoading = true;
+        loadError = null;
+
+        try
+        {
+            using var response = await CreateClient().GetAsync(Endpoint("api/v1/sources"));
+            if (!response.IsSuccessStatusCode)
+            {
+                loadError = "We could not load your sources. Reload to try again.";
+                return;
+            }
+
+            var loadedSources = await response.Content.ReadFromJsonAsync<List<SourceResponse>>() ?? [];
+            sources.Clear();
+            sources.AddRange(loadedSources);
+        }
+        catch (HttpRequestException)
+        {
+            loadError = "We could not reach the service to load your sources. Reload to try again.";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            loadError = "We could not reach the service to load your sources. Reload to try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveSourceAsync()
+    {
+        operationError = null;
+        statusMessage = null;
+        isSaving = true;
+
+        try
+        {
+            using var client = CreateClient();
+            using var response = editingId is null
+                ? await client.PostAsJsonAsync(Endpoint("api/v1/sources"), new CreateSourceRequest(editor.Name.Trim(), editor.FeedUrl.Trim()))
+                : await client.PutAsJsonAsync(Endpoint($"api/v1/sources/{editingId}"), new UpdateSourceRequest(editor.Name.Trim(), editor.FeedUrl.Trim(), editor.IsEnabled));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                operationError = GetSaveErrorMessage(response.StatusCode);
+                return;
+            }
+
+            var wasEditing = editingId is not null;
+            ResetEditor();
+            await LoadSourcesAsync();
+
+            if (string.IsNullOrWhiteSpace(loadError))
+            {
+                statusMessage = wasEditing ? "Source updated." : "Source added and validated.";
+            }
+            else
+            {
+                operationError = "Your change was saved, but the list could not be refreshed. Reload to try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to save this source. Please try again.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SetSourceEnabledAsync(SourceResponse source, bool isEnabled)
+    {
+        operationError = null;
+        statusMessage = null;
+        actionSourceId = source.Id;
+        actionName = isEnabled ? "enable" : "disable";
+
+        try
+        {
+            using var response = await CreateClient().PostAsync(Endpoint($"api/v1/sources/{source.Id}/{actionName}"), null);
+            if (!response.IsSuccessStatusCode)
+            {
+                operationError = GetActionErrorMessage(response.StatusCode, isEnabled ? "enable" : "disable");
+                return;
+            }
+
+            source.IsEnabled = isEnabled;
+            if (editingId == source.Id)
+            {
+                editor.IsEnabled = isEnabled;
+            }
+
+            statusMessage = isEnabled ? $"{source.Name} is enabled for automatic ingestion." : $"{source.Name} is disabled. Future automatic ingestion will skip it.";
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to update this source. Please try again.";
+        }
+        finally
+        {
+            actionSourceId = null;
+            actionName = null;
+        }
+    }
+
+    private void BeginEdit(SourceResponse source)
+    {
+        operationError = null;
+        statusMessage = null;
+        editingId = source.Id;
+        editor = new SourceEditor
+        {
+            Name = source.Name,
+            FeedUrl = source.FeedUrl,
+            IsEnabled = source.IsEnabled,
+        };
+    }
+
+    private void CancelEdit()
+    {
+        operationError = null;
+        statusMessage = null;
+        ResetEditor();
+    }
+
+    private void ResetEditor()
+    {
+        editingId = null;
+        editor = new SourceEditor();
+    }
+
+    private static string GetSaveErrorMessage(HttpStatusCode statusCode) => statusCode switch
+    {
+        HttpStatusCode.Conflict => "An active source with that feed URL already exists. Update the existing source or use a different feed URL.",
+        HttpStatusCode.UnprocessableEntity => "The URL could not be validated as a supported RSS or Atom feed. It was not added or updated.",
+        HttpStatusCode.BadRequest => "Check the source name and RSS or Atom feed URL, then try again.",
+        HttpStatusCode.NotFound => "This source is no longer available. Reload the list and try again.",
+        _ => "We could not save this source. Please try again.",
+    };
+
+    private static string GetActionErrorMessage(HttpStatusCode statusCode, string action) => statusCode switch
+    {
+        HttpStatusCode.NotFound => "This source is no longer available. Reload the list and try again.",
+        HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity => "This source could not be updated. Reload the list and try again.",
+        _ => $"We could not {action} this source. Please try again.",
+    };
+
+    private bool IsActionInProgress(SourceResponse source, string name) => actionSourceId == source.Id && actionName == name;
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+
+    private static string DisplayIngestionStatus(string? status) => status?.ToLowerInvariant() switch
+    {
+        "succeeded" or "success" => "Succeeded",
+        "failed" or "failure" => "Failed",
+        "inprogress" or "in-progress" or "running" => "In progress",
+        _ => "Status recorded",
+    };
+
+    private static string FormatIngestionTime(DateTimeOffset timestamp) => timestamp
+        .ToUniversalTime()
+        .ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private sealed class SourceEditor
+    {
+        [Required(ErrorMessage = "Enter a source name.")]
+        public string Name { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Enter an RSS or Atom feed URL.")]
+        [Url(ErrorMessage = "Enter a valid feed URL.")]
+        public string FeedUrl { get; set; } = string.Empty;
+
+        public bool IsEnabled { get; set; } = true;
+    }
+
+    private sealed class SourceResponse
+    {
+        public Guid Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public string FeedUrl { get; set; } = string.Empty;
+
+        public bool IsEnabled { get; set; }
+
+        public DateTimeOffset? LastIngestionAtUtc { get; set; }
+
+        public string? LastIngestionStatus { get; set; }
+    }
+
+    private sealed record CreateSourceRequest(string Name, string FeedUrl);
+
+    private sealed record UpdateSourceRequest(string Name, string FeedUrl, bool IsEnabled);
+}

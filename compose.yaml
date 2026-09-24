@@ -1,0 +1,149 @@
+name: personal-tech-brief
+
+# Full local stack. `docker compose up -d --build` starts SQL Server, the Service Bus emulator,
+# the Python intelligence service, a one-shot migrator, the web app and the processor, all on the
+# deterministic fake provider — no cloud, no cost. Then open http://localhost:${WEB_PORT:-8080}.
+# The finite RSS ingestion job is not started by default; run one pass with the `tools` profile:
+#   docker compose run --rm ingestion
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server@sha256:97b448857967be55e005424a660056fe6d51814435804dc07e8f79f028bab5fb
+    environment:
+      ACCEPT_EULA: ${ACCEPT_EULA}
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks:
+      - local-infrastructure
+
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator@sha256:5a96d893b245031740f7d46e0fe5ff282d24b78c4b7d761dd57590f3f010a9b3
+    environment:
+      SQL_SERVER: sqlserver
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      ACCEPT_EULA: ${ACCEPT_EULA}
+      EMULATOR_HTTP_PORT: ${EMULATOR_HTTP_PORT:-5300}
+      SQL_WAIT_INTERVAL: ${SQL_WAIT_INTERVAL:-15}
+    volumes:
+      - ./infra/servicebus-emulator/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "5672:5672"
+      - "5300:${EMULATOR_HTTP_PORT:-5300}"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - local-infrastructure
+
+  intelligence:
+    build:
+      context: .
+      dockerfile: infra/containers/python-intelligence.Dockerfile
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')\" || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - local-infrastructure
+
+  migrator:
+    build:
+      context: .
+      dockerfile: infra/containers/dotnet-migrator.Dockerfile
+    environment:
+      CONNECTION_STRING: "Server=sqlserver,1433;Database=PersonalTechBrief;User ID=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=False;TrustServerCertificate=True"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - local-infrastructure
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/containers/dotnet-web.Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__PersonalTechBrief: "Server=sqlserver,1433;Database=PersonalTechBrief;User ID=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=False;TrustServerCertificate=True"
+      IntelligenceApi__BaseAddress: "http://intelligence:8001"
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      intelligence:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - local-infrastructure
+
+  processor:
+    build:
+      context: .
+      dockerfile: infra/containers/dotnet-processor.Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__PersonalTechBrief: "Server=sqlserver,1433;Database=PersonalTechBrief;User ID=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=False;TrustServerCertificate=True"
+      IntelligenceApi__BaseAddress: "http://intelligence:8001"
+      ServiceBus__ConnectionString: "Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      intelligence:
+        condition: service_healthy
+      servicebus-emulator:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - local-infrastructure
+
+  # Finite RSS ingestion job (one pass, then exits). Not started by default:
+  #   docker compose run --rm ingestion
+  ingestion:
+    build:
+      context: .
+      dockerfile: infra/containers/dotnet-ingestion.Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__PersonalTechBrief: "Server=sqlserver,1433;Database=PersonalTechBrief;User ID=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=False;TrustServerCertificate=True"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    restart: "no"
+    profiles:
+      - tools
+    networks:
+      - local-infrastructure
+
+networks:
+  local-infrastructure:
+    name: personal-tech-brief-local
+
+volumes:
+  sqlserver-data:

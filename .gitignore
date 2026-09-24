@@ -1,0 +1,28 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# .NET build and IDE output
+[Bb]in/
+[Oo]bj/
+[Tt]est[Rr]esult*/
+.vs/
+*.user
+*.suo
+
+# Python environments, caches, and build output
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+*.egg-info/
+dist/
+build/
+
+# Operating-system and editor files
+.DS_Store
+Thumbs.db

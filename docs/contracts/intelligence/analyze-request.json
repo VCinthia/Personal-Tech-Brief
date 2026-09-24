@@ -1,0 +1,14 @@
+{
+  "correlationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "item": {
+    "sourceItemId": "9b2e6f3a-1c4d-4e5a-8b7c-0d1e2f3a4b5c",
+    "title": "New LTS runtime released",
+    "excerpt": "A summary of the release.",
+    "content": "Full article content about the release.",
+    "language": "en"
+  },
+  "candidateInterests": [
+    { "interestId": "0f8fad5b-d9cb-469f-a165-70867728950e", "name": "Runtime platforms", "priority": "high" },
+    { "interestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "name": "Security advisories", "priority": "medium" }
+  ]
+}

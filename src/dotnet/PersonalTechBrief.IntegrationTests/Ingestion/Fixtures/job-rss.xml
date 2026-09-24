@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>SQL fixture feed</title>
+    <link>https://feeds.example.test</link>
+    <description>SQL-backed ingestion fixture.</description>
+    <item>
+      <guid>sql-job-entry-1</guid>
+      <title>SQL-backed fixture entry</title>
+      <link>https://news.example.test/sql/entry-1</link>
+      <description>Fixture content for the transactional outbox path.</description>
+      <pubDate>2026-09-13T17:00:00Z</pubDate>
+    </item>
+  </channel>
+</rss>

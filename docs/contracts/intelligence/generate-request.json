@@ -1,0 +1,26 @@
+{
+  "correlationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "update": {
+    "technologyUpdateId": "9b2e6f3a-1c4d-4e5a-8b7c-0d1e2f3a4b5c",
+    "primaryTopic": "runtime-platforms",
+    "sources": [
+      {
+        "sourceItemId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "title": "Kubernetes 1.40 released",
+        "excerpt": "A platform release with a critical runtime security fix.",
+        "sourceUrl": "https://news.example.test/k8s-1-40",
+        "publishedAtUtc": "2026-09-13T15:00:00Z"
+      },
+      {
+        "sourceItemId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "title": "K8s 1.40 ships runtime hardening",
+        "excerpt": null,
+        "sourceUrl": "https://feeds.example.test/k8s140",
+        "publishedAtUtc": null
+      }
+    ]
+  },
+  "matchedInterests": [
+    { "interestId": "11111111-1111-1111-1111-111111111111", "name": "Platform engineering", "priority": "high" }
+  ]
+}

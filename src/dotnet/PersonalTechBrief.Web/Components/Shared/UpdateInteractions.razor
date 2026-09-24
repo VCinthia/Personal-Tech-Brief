@@ -1,0 +1,205 @@
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+@* Per-update feedback / save / source-open controls (FR-013 subset, UC-009/010). Reused by the
+   current-brief and history views. Read/Pending and Dismiss are out of scope. *@
+<div class="update-interactions">
+    <div class="feedback-controls" role="group" aria-label="Relevance feedback">
+        <button class="button button-secondary @(feedback == "relevant" ? "is-active" : null)"
+                type="button" @onclick='() => SubmitFeedbackAsync("relevant")' disabled="@isBusy">
+            Relevant
+        </button>
+        <button class="button button-secondary @(feedback == "notRelevant" ? "is-active" : null)"
+                type="button" @onclick='() => SubmitFeedbackAsync("notRelevant")' disabled="@isBusy">
+            Not relevant
+        </button>
+        @if (feedback is not null)
+        {
+            <button class="button button-secondary" type="button" @onclick="ClearFeedbackAsync" disabled="@isBusy">
+                Clear
+            </button>
+        }
+    </div>
+    <div class="save-control">
+        <button class="button button-secondary @(isSaved ? "is-active" : null)"
+                type="button" @onclick="ToggleSaveAsync" disabled="@isBusy">
+            @(isSaved ? "Saved" : "Save")
+        </button>
+    </div>
+
+    @if (Sources.Count > 0)
+    {
+        <div class="brief-item-sources">
+            <h3>Sources</h3>
+            <ul>
+                @foreach (var source in Sources)
+                {
+                    <li @key="source.SourceItemId">
+                        @if (IsSafeHref(source.Url))
+                        {
+                            <a href="@source.Url" target="_blank" rel="noopener noreferrer"
+                               @onclick="() => RecordOpenAsync(source.SourceItemId)">@source.Title</a>
+                        }
+                        else
+                        {
+                            <span>@source.Title</span>
+                        }
+                        @if (source.PublishedAtUtc is not null)
+                        {
+                            <span class="brief-item-source-date"> &mdash; @FormatTime(source.PublishedAtUtc.Value)</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <p class="status-message" role="status">@statusMessage</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <p class="error-message" role="alert">@errorMessage</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public Guid TechnologyUpdateId { get; set; }
+
+    [Parameter]
+    public Guid? BriefItemId { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<SourceLink> Sources { get; set; } = [];
+
+    // Persisted state for this update, so the controls reflect prior feedback/save on load
+    // (Slice 7.1). Optimistic in-session changes are kept; a fresh component instance re-seeds.
+    [Parameter]
+    public string? InitialFeedback { get; set; }
+
+    [Parameter]
+    public bool InitiallySaved { get; set; }
+
+    private string? feedback;
+    private bool isSaved;
+    private bool isBusy;
+    private string? statusMessage;
+    private string? errorMessage;
+
+    public sealed record SourceLink(Guid SourceItemId, string Title, string? Url, DateTimeOffset? PublishedAtUtc);
+
+    protected override void OnInitialized()
+    {
+        feedback = InitialFeedback;
+        isSaved = InitiallySaved;
+    }
+
+    private async Task SubmitFeedbackAsync(string value)
+    {
+        await RunAsync(async client =>
+        {
+            var payload = new { value, briefItemId = BriefItemId };
+            using var response = await client.PutAsJsonAsync(Endpoint($"api/v1/updates/{TechnologyUpdateId}/feedback"), payload);
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                feedback = value;
+                statusMessage = value == "relevant" ? "Marked relevant." : "Marked not relevant.";
+            }
+            else
+            {
+                errorMessage = "We could not record your feedback. Please try again.";
+            }
+        });
+    }
+
+    private async Task ClearFeedbackAsync()
+    {
+        await RunAsync(async client =>
+        {
+            using var response = await client.DeleteAsync(Endpoint($"api/v1/updates/{TechnologyUpdateId}/feedback"));
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                feedback = null;
+                statusMessage = "Feedback cleared.";
+            }
+            else
+            {
+                errorMessage = "We could not clear your feedback. Please try again.";
+            }
+        });
+    }
+
+    private async Task ToggleSaveAsync()
+    {
+        await RunAsync(async client =>
+        {
+            var endpoint = Endpoint($"api/v1/updates/{TechnologyUpdateId}/saved");
+            using var response = isSaved
+                ? await client.DeleteAsync(endpoint)
+                : await client.PutAsync(endpoint, content: null);
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                isSaved = !isSaved;
+                statusMessage = isSaved ? "Saved for later." : "Removed from saved.";
+            }
+            else
+            {
+                errorMessage = "We could not update the saved state. Please try again.";
+            }
+        });
+    }
+
+    // Fire-and-forget telemetry: the anchor still opens the source; a failure here must not block the user.
+    private async Task RecordOpenAsync(Guid sourceItemId)
+    {
+        try
+        {
+            using var client = CreateClient();
+            using var response = await client.PostAsync(
+                Endpoint($"api/v1/updates/{TechnologyUpdateId}/sources/{sourceItemId}/open"),
+                content: null);
+            _ = response;
+        }
+        catch (HttpRequestException)
+        {
+            // Telemetry is best-effort; ignore transient failures.
+        }
+    }
+
+    private async Task RunAsync(Func<HttpClient, Task> action)
+    {
+        isBusy = true;
+        statusMessage = null;
+        errorMessage = null;
+        try
+        {
+            using var client = CreateClient();
+            await action(client);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "We could not reach the service. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    // Source URLs originate in untrusted feed item links; only render a clickable anchor for an absolute
+    // http/https URL so a javascript:/data: scheme can never become a stored-XSS href.
+    private static bool IsSafeHref(string? url) =>
+        !string.IsNullOrWhiteSpace(url)
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static string FormatTime(DateTimeOffset timestamp) => timestamp
+        .ToUniversalTime()
+        .ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+}

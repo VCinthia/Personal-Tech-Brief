@@ -1,0 +1,351 @@
+@page "/interests"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Interests</PageTitle>
+
+<section class="interests-page" aria-labelledby="interests-title">
+    <div class="page-heading">
+        <div>
+            <h1 id="interests-title">Interests</h1>
+            <p>Choose specific technology topics and how strongly they should influence relevance.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message" role="status">@statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(operationError))
+    {
+        <div class="error-message" role="alert">
+            <p>@operationError</p>
+        </div>
+    }
+
+    <div class="interests-grid">
+        <section class="interest-panel" aria-labelledby="form-title">
+            <h2 id="form-title">@(editingId is null ? "Add an interest" : "Edit interest")</h2>
+            <p class="helper-text">For example, use <em>ASP.NET Core</em> rather than a broad category such as <em>Programming</em>.</p>
+
+            <EditForm Model="editor" OnValidSubmit="SaveInterestAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="validation-summary" />
+
+                <div class="form-field">
+                    <label for="interest-name">Topic</label>
+                    <InputText id="interest-name" class="form-control" @bind-Value="editor.Name" autocomplete="off" />
+                    <ValidationMessage For="@(() => editor.Name)" />
+                </div>
+
+                <div class="form-field">
+                    <label for="interest-priority">Priority</label>
+                    <InputSelect id="interest-priority" class="form-control" @bind-Value="editor.Priority">
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                    </InputSelect>
+                    <ValidationMessage For="@(() => editor.Priority)" />
+                </div>
+
+                @if (editingId is not null)
+                {
+                    <div class="form-field checkbox-field">
+                        <InputCheckbox id="interest-is-active" @bind-Value="editor.IsActive" />
+                        <label for="interest-is-active">Active and used in relevance evaluation</label>
+                    </div>
+                }
+
+                <div class="form-actions">
+                    <button class="button" type="submit" disabled="@isSaving">
+                        @(isSaving ? "Saving..." : editingId is null ? "Add interest" : "Save changes")
+                    </button>
+                    @if (editingId is not null)
+                    {
+                        <button class="button button-secondary" type="button" @onclick="CancelEdit" disabled="@isSaving">Cancel</button>
+                    }
+                </div>
+            </EditForm>
+        </section>
+
+        <section class="interest-panel" aria-labelledby="configured-interests-title" aria-busy="@isLoading">
+            <div class="section-heading">
+                <h2 id="configured-interests-title">Configured interests</h2>
+                <button class="text-button" type="button" @onclick="ReloadAsync" disabled="@isLoading">Reload</button>
+            </div>
+
+            @if (isLoading)
+            {
+                <p role="status">Loading interests...</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(loadError))
+            {
+                <div class="error-message" role="alert">
+                    <p>@loadError</p>
+                    <button class="button button-secondary" type="button" @onclick="ReloadAsync">Try again</button>
+                </div>
+            }
+            else if (interests.Count == 0)
+            {
+                <p class="empty-state">No interests are configured yet. Add a specific topic to begin.</p>
+            }
+            else
+            {
+                <div class="table-wrapper">
+                    <table>
+                        <caption class="visually-hidden">Configured interests with their priority and active status.</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Topic</th>
+                                <th scope="col">Priority</th>
+                                <th scope="col">Status</th>
+                                <th scope="col"><span class="visually-hidden">Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var interest in interests)
+                            {
+                                <tr @key="interest.Id">
+                                    <th scope="row">@interest.Name</th>
+                                    <td>@DisplayPriority(interest.Priority)</td>
+                                    <td>
+                                        <span class="status-badge @(interest.IsActive ? "status-badge--active" : "status-badge--inactive")">
+                                            @(interest.IsActive ? "Active" : "Inactive")
+                                        </span>
+                                    </td>
+                                    <td class="row-actions">
+                                        <button class="text-button" type="button" @onclick="() => BeginEdit(interest)" disabled="@isSaving">Edit</button>
+                                        @if (interest.IsActive)
+                                        {
+                                            <button class="text-button text-button-danger" type="button" @onclick="() => DisableInterestAsync(interest)" disabled="@(disablingId == interest.Id)">
+                                                @(disablingId == interest.Id ? "Disabling..." : "Disable")
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    </div>
+</section>
+
+@code {
+    private readonly List<InterestResponse> interests = [];
+    private InterestEditor editor = new();
+    private Guid? editingId;
+    private Guid? disablingId;
+    private bool isLoading = true;
+    private bool isSaving;
+    private string? loadError;
+    private string? operationError;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadInterestsAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        statusMessage = null;
+        operationError = null;
+        await LoadInterestsAsync();
+    }
+
+    private async Task LoadInterestsAsync()
+    {
+        isLoading = true;
+        loadError = null;
+
+        try
+        {
+            using var response = await CreateClient().GetAsync(Endpoint("api/v1/interests"));
+            if (!response.IsSuccessStatusCode)
+            {
+                loadError = "We could not load your interests. Reload to try again.";
+                return;
+            }
+
+            var loadedInterests = await response.Content.ReadFromJsonAsync<List<InterestResponse>>() ?? [];
+            interests.Clear();
+            interests.AddRange(loadedInterests);
+        }
+        catch (HttpRequestException)
+        {
+            loadError = "We could not reach the service to load your interests. Reload to try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveInterestAsync()
+    {
+        operationError = null;
+        statusMessage = null;
+        isSaving = true;
+
+        try
+        {
+            using var client = CreateClient();
+            using var response = editingId is null
+                ? await client.PostAsJsonAsync(Endpoint("api/v1/interests"), new InterestRequest(editor.Name.Trim(), editor.Priority, true))
+                : await client.PutAsJsonAsync(Endpoint($"api/v1/interests/{editingId}"), new InterestRequest(editor.Name.Trim(), editor.Priority, editor.IsActive));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                operationError = await ReadErrorMessageAsync(response, "We could not save this interest. Please try again.");
+                return;
+            }
+
+            var savedExistingInterest = editingId is not null;
+            ResetEditor();
+            await LoadInterestsAsync();
+
+            if (string.IsNullOrWhiteSpace(loadError))
+            {
+                statusMessage = savedExistingInterest ? "Interest updated." : "Interest added.";
+            }
+            else
+            {
+                operationError = "Your change was saved, but the list could not be refreshed. Reload to try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to save this interest. Please try again.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DisableInterestAsync(InterestResponse interest)
+    {
+        operationError = null;
+        statusMessage = null;
+        disablingId = interest.Id;
+
+        try
+        {
+            using var response = await CreateClient().DeleteAsync(Endpoint($"api/v1/interests/{interest.Id}"));
+            if (!response.IsSuccessStatusCode)
+            {
+                operationError = await ReadErrorMessageAsync(response, "We could not disable this interest. Please try again.");
+                return;
+            }
+
+            interest.IsActive = false;
+            if (editingId == interest.Id)
+            {
+                editor.IsActive = false;
+            }
+
+            statusMessage = $"{interest.Name} is now inactive.";
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to disable this interest. Please try again.";
+        }
+        finally
+        {
+            disablingId = null;
+        }
+    }
+
+    private void BeginEdit(InterestResponse interest)
+    {
+        operationError = null;
+        statusMessage = null;
+        editingId = interest.Id;
+        editor = new InterestEditor
+        {
+            Name = interest.Name,
+            Priority = interest.Priority,
+            IsActive = interest.IsActive,
+        };
+    }
+
+    private void CancelEdit()
+    {
+        operationError = null;
+        statusMessage = null;
+        ResetEditor();
+    }
+
+    private void ResetEditor()
+    {
+        editingId = null;
+        editor = new InterestEditor();
+    }
+
+    private async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            return "An active interest with that name already exists. Choose another name or update the existing interest.";
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return "This interest is no longer available. Reload the list and try again.";
+        }
+
+        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity)
+        {
+            var validationProblem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+            var validationMessages = validationProblem?.Errors.Values.SelectMany(messages => messages).Where(message => !string.IsNullOrWhiteSpace(message)).Take(3).ToArray();
+
+            if (validationMessages is { Length: > 0 })
+            {
+                return string.Join(" ", validationMessages);
+            }
+
+            return "Check the interest name and priority, then try again.";
+        }
+
+        return fallback;
+    }
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+
+    private static string DisplayPriority(string priority) => priority.ToLowerInvariant() switch
+    {
+        "high" => "High",
+        "medium" => "Medium",
+        "low" => "Low",
+        _ => priority,
+    };
+
+    private sealed class InterestEditor
+    {
+        [Required(ErrorMessage = "Enter a technology topic.")]
+        public string Name { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Choose a priority.")]
+        public string Priority { get; set; } = "medium";
+
+        public bool IsActive { get; set; } = true;
+    }
+
+    private sealed class InterestResponse
+    {
+        public Guid Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public string Priority { get; set; } = string.Empty;
+
+        public bool IsActive { get; set; }
+    }
+
+    private sealed record InterestRequest(string Name, string Priority, bool IsActive);
+}

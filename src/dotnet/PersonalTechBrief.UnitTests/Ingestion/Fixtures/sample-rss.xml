@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Fixture technology feed</title>
+    <link>https://feeds.example.test</link>
+    <description>Deterministic fixture.</description>
+    <item>
+      <guid>rss-fixture-1</guid>
+      <title>  A durable   first update </title>
+      <link>https://news.example.test/updates/one?Ref=RSS</link>
+      <description> A concise &lt;b&gt;fixture&lt;/b&gt; excerpt. </description>
+      <pubDate>Sun, 13 Sep 2026 12:00:00 -0300</pubDate>
+    </item>
+    <item>
+      <guid>rss-fixture-2</guid>
+      <title>Second Atom-compatible lesson</title>
+      <link>/updates/two</link>
+      <description>Second deterministic excerpt.</description>
+      <pubDate>2026-09-13T16:30:00Z</pubDate>
+    </item>
+  </channel>
+</rss>

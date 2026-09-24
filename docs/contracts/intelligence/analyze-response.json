@@ -1,0 +1,16 @@
+{
+  "correlationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "sourceItemId": "9b2e6f3a-1c4d-4e5a-8b7c-0d1e2f3a4b5c",
+  "analyzerVersion": "analyze-1",
+  "language": "en",
+  "normalized": {
+    "keywords": ["runtime", "lts", "release"],
+    "eventDescriptors": ["version-release"]
+  },
+  "topics": ["runtime-platforms", "release-management"],
+  "interestMatches": [
+    { "interestId": "0f8fad5b-d9cb-469f-a165-70867728950e", "matchStrength": 0.92 },
+    { "interestId": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "matchStrength": 0.15 }
+  ],
+  "impact": { "level": "high", "confidence": 0.81 }
+}

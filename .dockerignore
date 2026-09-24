@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+**/bin
+**/obj
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/TestResults
+**/*.user
+**/*.suo

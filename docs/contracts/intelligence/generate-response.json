@@ -1,0 +1,8 @@
+{
+  "correlationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "technologyUpdateId": "9b2e6f3a-1c4d-4e5a-8b7c-0d1e2f3a4b5c",
+  "generationVersion": "generate-1",
+  "title": "Kubernetes 1.40 released with a critical runtime security fix",
+  "summary": "Kubernetes 1.40 is out, delivering runtime hardening and a critical security fix reported by two sources.",
+  "whyRelevant": "It affects the runtime platforms you follow at high priority and carries a critical security fix."
+}

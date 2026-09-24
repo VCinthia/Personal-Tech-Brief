@@ -1,0 +1,13 @@
+{
+  "correlationId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "sourceItemId": "9b2e6f3a-1c4d-4e5a-8b7c-0d1e2f3a4b5c",
+  "analyzerVersion": "analyze-1",
+  "language": null,
+  "normalized": {
+    "keywords": [],
+    "eventDescriptors": []
+  },
+  "topics": [],
+  "interestMatches": [],
+  "impact": { "level": "none", "confidence": 0.0 }
+}

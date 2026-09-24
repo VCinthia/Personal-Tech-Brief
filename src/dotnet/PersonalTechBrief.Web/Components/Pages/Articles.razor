@@ -1,0 +1,128 @@
+@page "/articles"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Add article</PageTitle>
+
+<section class="articles-page" aria-labelledby="articles-title">
+    <div class="page-heading">
+        <div>
+            <h1 id="articles-title">Add an article</h1>
+            <p>Submit a single public article URL for one-off analysis. This does not subscribe to the site or add it as a permanent source.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message" role="status">@statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(operationError))
+    {
+        <div class="error-message" role="alert">
+            <p>@operationError</p>
+        </div>
+    }
+
+    <section class="article-panel" aria-labelledby="article-form-title">
+        <h2 id="article-form-title">Article URL</h2>
+        <p class="helper-text">Enter an absolute http or https link to a public article. Only the extracted text is stored — never the raw page.</p>
+
+        <EditForm Model="editor" OnValidSubmit="SubmitAsync">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="validation-summary" />
+
+            <div class="form-field">
+                <label for="article-url">Article URL</label>
+                <InputText id="article-url" class="form-control" @bind-Value="editor.Url" autocomplete="url" type="url" placeholder="https://example.com/article" />
+                <ValidationMessage For="@(() => editor.Url)" />
+            </div>
+
+            <div class="form-actions">
+                <button class="button" type="submit" disabled="@isSubmitting">
+                    @(isSubmitting ? "Submitting..." : "Submit article")
+                </button>
+            </div>
+        </EditForm>
+    </section>
+</section>
+
+@code {
+    private ArticleEditor editor = new();
+    private bool isSubmitting;
+    private string? operationError;
+    private string? statusMessage;
+
+    private async Task SubmitAsync()
+    {
+        operationError = null;
+        statusMessage = null;
+        isSubmitting = true;
+
+        try
+        {
+            using var client = CreateClient();
+            using var response = await client.PostAsJsonAsync(
+                Endpoint("api/v1/articles"),
+                new SubmitArticleRequest(editor.Url.Trim()));
+
+            if (response.StatusCode == HttpStatusCode.Accepted)
+            {
+                var accepted = await ReadResponseAsync(response);
+                statusMessage = accepted?.Status == "duplicate"
+                    ? "This article was already submitted, so it was not added again."
+                    : "Article accepted. It is being analyzed and may appear in a future brief.";
+                editor = new ArticleEditor();
+                return;
+            }
+
+            operationError = GetErrorMessage(response.StatusCode);
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to submit this article. Please try again.";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            operationError = "The article was submitted, but the response could not be read. Check the brief later.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private static async Task<SubmitArticleResponse?> ReadResponseAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<SubmitArticleResponse>();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string GetErrorMessage(HttpStatusCode statusCode) => statusCode switch
+    {
+        HttpStatusCode.BadRequest => "Enter a valid, absolute public http or https article URL.",
+        HttpStatusCode.UnprocessableEntity => "The link could not be fetched or read as an article. Check the URL and try again.",
+        _ => "We could not submit this article. Please try again.",
+    };
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+
+    private sealed class ArticleEditor
+    {
+        [Required(ErrorMessage = "Enter an article URL.")]
+        [Url(ErrorMessage = "Enter a valid URL.")]
+        public string Url { get; set; } = string.Empty;
+    }
+
+    private sealed record SubmitArticleRequest(string Url);
+
+    private sealed record SubmitArticleResponse(Guid? ArticleId, string? Status);
+}

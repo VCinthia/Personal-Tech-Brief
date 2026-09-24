@@ -1,0 +1,308 @@
+@page "/brief"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Your brief</PageTitle>
+
+<section class="brief-page" aria-labelledby="brief-title">
+    <div class="page-heading">
+        <div>
+            <h1 id="brief-title">Your brief</h1>
+            <p>A focused set of the most relevant recent updates &mdash; never an endless feed.</p>
+        </div>
+        <button class="button" type="button" @onclick="GenerateBriefAsync" disabled="@(isGenerating || isLoading)">
+            @(isGenerating ? "Generating..." : "Generate new brief")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message" role="status">@statusMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(operationError))
+    {
+        <div class="error-message" role="alert">
+            <p>@operationError</p>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <p role="status">Loading your brief...</p>
+    }
+    else if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <div class="error-message" role="alert">
+            <p>@loadError</p>
+            <button class="button button-secondary" type="button" @onclick="ReloadAsync">Try again</button>
+        </div>
+    }
+    else if (current is null)
+    {
+        <p class="empty-state">No brief has been generated yet. Select "Generate new brief" to create your first one.</p>
+    }
+    else
+    {
+        <div class="brief-meta">
+            <span class="status-badge">@DisplayStatus(current.Brief.Status)</span>
+            <span>Generated @FormatTime(current.Brief.GeneratedAtUtc)</span>
+        </div>
+
+        @if (IsGenerating(current.Brief.Status))
+        {
+            <p role="status">Your brief is being generated. This page will refresh when it is ready.</p>
+        }
+        else if (current.Items.Count == 0)
+        {
+            <p class="empty-state">This brief has no items &mdash; no recent update met the relevance threshold for your interests.</p>
+        }
+        else
+        {
+            <ol class="brief-items">
+                @foreach (var item in current.Items)
+                {
+                    <li class="brief-item" @key="item.Id">
+                        <article aria-labelledby="@($"brief-item-{item.Id}")">
+                            <p class="brief-item-topic">@item.Topic</p>
+                            <h2 id="@($"brief-item-{item.Id}")">@item.Title</h2>
+                            <p class="brief-item-summary">@item.Summary</p>
+                            <p class="brief-item-why"><strong>Why this is relevant:</strong> @item.WhyRelevant</p>
+                            <UpdateInteractions TechnologyUpdateId="item.TechnologyUpdateId"
+                                                BriefItemId="item.Id"
+                                                InitialFeedback="item.CurrentFeedback"
+                                                InitiallySaved="item.IsSaved"
+                                                Sources="MapSources(item.Sources)" />
+                        </article>
+                    </li>
+                }
+            </ol>
+        }
+    }
+</section>
+
+@code {
+    private CurrentBrief? current;
+    private bool isLoading = true;
+    private bool isGenerating;
+    private string? loadError;
+    private string? operationError;
+    private string? statusMessage;
+
+    private const int MaxPollAttempts = 30;
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCurrentAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        statusMessage = null;
+        operationError = null;
+        await LoadCurrentAsync();
+    }
+
+    private async Task LoadCurrentAsync()
+    {
+        isLoading = true;
+        loadError = null;
+
+        try
+        {
+            using var response = await CreateClient().GetAsync(Endpoint("api/v1/briefs/current"));
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                current = null;
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                loadError = "We could not load your brief. Reload to try again.";
+                return;
+            }
+
+            current = await response.Content.ReadFromJsonAsync<CurrentBrief>();
+        }
+        catch (HttpRequestException)
+        {
+            loadError = "We could not reach the service to load your brief. Reload to try again.";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            loadError = "We could not load your brief. Reload to try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task GenerateBriefAsync()
+    {
+        operationError = null;
+        statusMessage = null;
+        isGenerating = true;
+
+        try
+        {
+            Guid briefId;
+            using (var response = await CreateClient().PostAsync(Endpoint("api/v1/briefs"), content: null))
+            {
+                if (response.StatusCode != HttpStatusCode.Accepted)
+                {
+                    operationError = "We could not start generating a brief. Please try again.";
+                    return;
+                }
+
+                var created = await response.Content.ReadFromJsonAsync<CreatedBrief>();
+                briefId = created?.Id ?? Guid.Empty;
+            }
+
+            statusMessage = "Generating your brief...";
+            await PollUntilReadyAsync(briefId);
+        }
+        catch (HttpRequestException)
+        {
+            operationError = "We could not reach the service to generate a brief. Please try again.";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            operationError = "We could not start generating a brief. Please try again.";
+        }
+        finally
+        {
+            isGenerating = false;
+        }
+    }
+
+    // Poll the specific new brief by id (not /current, which returns only the last completed brief) until
+    // it leaves Generating, then refresh the current view.
+    private async Task PollUntilReadyAsync(Guid briefId)
+    {
+        for (var attempt = 0; briefId != Guid.Empty && attempt < MaxPollAttempts; attempt++)
+        {
+            await Task.Delay(PollInterval);
+
+            try
+            {
+                using var response = await CreateClient().GetAsync(Endpoint($"api/v1/briefs/{briefId}"));
+                if (!response.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                var brief = await response.Content.ReadFromJsonAsync<CurrentBrief>();
+                if (brief is not null && !IsGenerating(brief.Brief.Status))
+                {
+                    await LoadCurrentAsync();
+                    statusMessage = brief.Items.Count > 0
+                        ? "Your new brief is ready."
+                        : "Your new brief is ready. No recent update met the relevance threshold.";
+                    return;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // Transient; keep polling within the bounded attempt budget.
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Ignore a malformed intermediate response; keep polling.
+            }
+        }
+
+        statusMessage = "Your brief is still generating. Reload to check again shortly.";
+    }
+
+    private static bool IsGenerating(string? status) =>
+        string.Equals(status, "generating", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<UpdateInteractions.SourceLink> MapSources(List<BriefSource> sources) =>
+        sources
+            .Select(source => new UpdateInteractions.SourceLink(
+                source.SourceItemId,
+                source.Title,
+                source.Url,
+                source.PublishedAtUtc))
+            .ToList();
+
+    private static string DisplayStatus(string? status) => status?.ToLowerInvariant() switch
+    {
+        "generating" => "Generating",
+        "completed" => "Completed",
+        "failed" => "Failed",
+        _ => "Unknown",
+    };
+
+    private static string FormatTime(DateTimeOffset timestamp) => timestamp
+        .ToUniversalTime()
+        .ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private HttpClient CreateClient() => HttpClientFactory.CreateClient();
+
+    private Uri Endpoint(string relativePath) => new(new Uri(Navigation.BaseUri), relativePath);
+
+    private sealed class CreatedBrief
+    {
+        public Guid Id { get; set; }
+
+        public string Status { get; set; } = string.Empty;
+    }
+
+    private sealed class CurrentBrief
+    {
+        public BriefHeader Brief { get; set; } = new();
+
+        public List<BriefItem> Items { get; set; } = [];
+    }
+
+    private sealed class BriefHeader
+    {
+        public Guid Id { get; set; }
+
+        public DateTimeOffset GeneratedAtUtc { get; set; }
+
+        public string Status { get; set; } = string.Empty;
+
+        public int CandidateCount { get; set; }
+
+        public int SelectedCount { get; set; }
+    }
+
+    private sealed class BriefItem
+    {
+        public Guid Id { get; set; }
+
+        public Guid TechnologyUpdateId { get; set; }
+
+        public int Rank { get; set; }
+
+        public string Title { get; set; } = string.Empty;
+
+        public string Topic { get; set; } = string.Empty;
+
+        public string Summary { get; set; } = string.Empty;
+
+        public string WhyRelevant { get; set; } = string.Empty;
+
+        public List<BriefSource> Sources { get; set; } = [];
+
+        public string? CurrentFeedback { get; set; }
+
+        public bool IsSaved { get; set; }
+    }
+
+    private sealed class BriefSource
+    {
+        public Guid SourceItemId { get; set; }
+
+        public string Title { get; set; } = string.Empty;
+
+        public string? Url { get; set; }
+
+        public DateTimeOffset? PublishedAtUtc { get; set; }
+    }
+}
