@@ -29,6 +29,25 @@ function Wait-For($url, $minutes) {
     return $false
 }
 
+function Get-EnvValue($key) {
+    if (-not (Test-Path .env)) { return $null }
+    $m = Select-String -Path .env -Pattern "^\s*$key\s*=\s*(.*?)\s*$" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value } else { return $null }
+}
+
+# SQL Server rejects a weak SA password and exits on startup, which otherwise
+# only surfaces as a confusing timeout later. Mirror its policy: 8+ characters
+# and at least three of the four sets (uppercase, lowercase, digit, symbol).
+function Test-SqlPasswordPolicy($pw) {
+    if ([string]::IsNullOrEmpty($pw) -or $pw.Length -lt 8) { return $false }
+    $cats = 0
+    if ($pw -cmatch '[A-Z]') { $cats++ }
+    if ($pw -cmatch '[a-z]') { $cats++ }
+    if ($pw -match '[0-9]') { $cats++ }
+    if ($pw -match '[^A-Za-z0-9]') { $cats++ }
+    return ($cats -ge 3)
+}
+
 try {
     Write-Host ''
     Write-Host 'Personal Tech Brief' -ForegroundColor Cyan
@@ -50,6 +69,21 @@ try {
     if (-not (Test-Path .env)) {
         Copy-Item .env.example .env
         Write-Host 'Cree un archivo .env. Abrilo, pone una contrasena en MSSQL_SA_PASSWORD y ACCEPT_EULA=Y, y volve a correr.' -ForegroundColor Yellow
+        Read-Host 'Enter para cerrar'; return
+    }
+
+    # 2b. Fail fast on the two .env mistakes that make SQL Server exit on startup
+    #     (otherwise you only see the "tardo demasiado" timeout minutes later).
+    if (-not (Test-SqlPasswordPolicy (Get-EnvValue 'MSSQL_SA_PASSWORD'))) {
+        Write-Host 'La MSSQL_SA_PASSWORD de tu .env no cumple la politica de SQL Server.' -ForegroundColor Red
+        Write-Host 'Necesita 8+ caracteres y 3 de 4: mayuscula, minuscula, digito y simbolo.' -ForegroundColor Red
+        Write-Host 'Editala en .env (ejemplo: LocalDev!Passw0rd) y volve a correr.' -ForegroundColor Yellow
+        Read-Host 'Enter para cerrar'; return
+    }
+    if ((Get-EnvValue 'ACCEPT_EULA') -ne 'Y') {
+        Write-Host 'ACCEPT_EULA en tu .env no esta en Y.' -ForegroundColor Red
+        Write-Host 'SQL Server y el emulador de Service Bus no arrancan sin aceptar sus licencias.' -ForegroundColor Red
+        Write-Host 'Si las revisaste y las aceptas, pone ACCEPT_EULA=Y en .env y volve a correr.' -ForegroundColor Yellow
         Read-Host 'Enter para cerrar'; return
     }
 
