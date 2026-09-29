@@ -3,10 +3,9 @@
 Turn many technology sources into one very small, relevant brief — so you stay
 current without drowning in feeds.
 
-<video src="https://github.com/VCinthia/Personal-Tech-Brief/raw/main/docs/media/personal-tech-brief-demo.mp4" controls width="720">
-  Your browser can't play this embedded video.
-  <a href="docs/media/personal-tech-brief-demo.mp4">View the demo</a>.
-</video>
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/9d96d714-67ee-4a1d-b3d5-b92a8eaf0f9d" alt="Personal Tech Brief demo" width="640">
+</div>
 
 ## What it is
 
